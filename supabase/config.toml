@@ -1,0 +1,2 @@
+[functions.admin-reset-password]
+verify_jwt = true
