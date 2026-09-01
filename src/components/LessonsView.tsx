@@ -13,7 +13,7 @@ type MyProfile = {
 };
 
 type Props = {
-  teacher: Teacher;
+  teacherId: string;
   editMode: boolean;
   onOpen: (l: Lesson) => void;
   isAdmin?: boolean;
@@ -22,17 +22,14 @@ type Props = {
 
 const COLS = 'grid grid-cols-[1.2fr_0.8fr_1fr_1fr_auto] gap-3';
 
-// Для режима просмотра gap намеренно отсутствует:
-// структура заголовка должна совпадать с объединённой сеткой строк.
-const VIEW_COLS = 'grid grid-cols-[1.2fr_0.8fr_1fr_1fr_auto]';
-
 export default function LessonsView({
-  teacher,
+  teacherId,
   editMode,
   onOpen,
   isAdmin,
   myProfile,
 }: Props) {
+  const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,17 +44,24 @@ export default function LessonsView({
     setLoading(true);
     setError(null);
 
-    const { data, error } = await supabase
-      .from('lessons')
-      .select('*')
-      .eq('teacher_id', teacher.id)
-      .order('weekday', { ascending: true, nullsFirst: false })
-      .order('start_time', { ascending: true, nullsFirst: false })
-      .order('sort_order', { ascending: true })
-      .order('created_at', { ascending: true });
+    const [tRes, lRes] = await Promise.all([
+      supabase.from('teachers').select('*').eq('id', teacherId).maybeSingle(),
+      supabase
+        .from('lessons')
+        .select('*')
+        .eq('teacher_id', teacherId)
+        .order('weekday', { ascending: true, nullsFirst: false })
+        .order('start_time', { ascending: true, nullsFirst: false })
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true }),
+    ]);
 
-    if (error) setError(error.message);
-    else setLessons(data ?? []);
+    if (tRes.error) setError(tRes.error.message);
+    else if (lRes.error) setError(lRes.error.message);
+    else {
+      setTeacher(tRes.data as Teacher | null);
+      setLessons(lRes.data ?? []);
+    }
 
     setLoading(false);
   };
@@ -67,12 +71,12 @@ export default function LessonsView({
 
     if (myProfile && !isAdmin) {
       supabase.rpc('get_my_teacher_id').then(({ data }) => {
-        setCanEdit(data === teacher.id);
+        setCanEdit(data === teacherId);
       });
     } else {
       setCanEdit(!!isAdmin);
     }
-  }, [teacher.id]);
+  }, [teacherId]);
 
   const editable = editMode && canEdit;
 
@@ -110,7 +114,7 @@ export default function LessonsView({
     const { data, error } = await supabase
       .from('lessons')
       .insert({
-        teacher_id: teacher.id,
+        teacher_id: teacherId,
         class_name,
         classroom: classroom || null,
         weekday: Number(newWeekday) || 1,
@@ -150,28 +154,19 @@ export default function LessonsView({
     if (!confirm('Удалить эту строку расписания вместе с заданиями?')) return;
 
     setLessons((prev) => prev.filter((x) => x.id !== l.id));
-    await supabase.from('lessons').delete().eq('id', l.id);
-  };
-
-  const lessonWord = (count: number) => {
-    if (count % 10 === 1 && count % 100 !== 11) return 'урок';
-
-    if (
-      [2, 3, 4].includes(count % 10) &&
-      ![12, 13, 14].includes(count % 100)
-    ) {
-      return 'урока';
+    const { error } = await supabase.from('lessons').delete().eq('id', l.id);
+    if (error) {
+      setError(error.message);
+      load();
     }
-
-    return 'уроков';
   };
 
   return (
     <section>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-display text-3xl font-semibold text-slate-900 dark:text-slate-100">
-            {teacher.name}
+        <div className="min-w-0">
+          <h1 className="truncate font-display text-2xl font-semibold text-slate-900 sm:text-3xl dark:text-slate-100">
+            {teacher?.name ?? '…'}
           </h1>
 
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -180,7 +175,7 @@ export default function LessonsView({
         </div>
 
         {editMode && !canEdit && (
-          <span className="flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1.5 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1.5 text-xs font-semibold text-slate-500 dark:bg-slate-700 dark:text-slate-400">
             <Lock size={12} /> Только просмотр
           </span>
         )}
@@ -303,15 +298,10 @@ export default function LessonsView({
                       : ''
                   }`}
                 >
-                  {/* Общая ячейка дня — визуальный аналог rowspan */}
                   <div className="flex flex-col justify-center border-r border-stone-100 bg-stone-50/60 px-4 py-4 sm:px-5 dark:border-slate-700 dark:bg-slate-700/20">
                     <span className="font-semibold text-slate-800 dark:text-slate-100">
                       {weekdayName(weekday)}
                     </span>
-
-                    {/* <span className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {dayLessons.length} {lessonWord(dayLessons.length)}
-                    </span> */}
                   </div>
 
                   <div>

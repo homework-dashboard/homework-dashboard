@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, Plus, Copy, Check, Trash2, Loader2, ShieldCheck, User, ShieldAlert, Key, Link2 } from 'lucide-react';
+import { KeyRound, Plus, Copy, Check, Trash2, Loader2, ShieldCheck, User, ShieldAlert, Key, Link2, UserX } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import ConfirmDialog from '@/components/ConfirmDialog';
 
 type RegCode = {
   id: string;
@@ -45,7 +46,12 @@ export default function AdminPanel({ onClose }: Props) {
   const [resettingId, setResettingId] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<{ teacherId: string; password: string } | null>(null);
   const [assigningId, setAssigningId] = useState<string | null>(null);
-  const [assignName, setAssignName] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<null | {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  }>(null);
 
   const load = async () => {
     setLoading(true);
@@ -97,14 +103,72 @@ export default function AdminPanel({ onClose }: Props) {
     }
   };
 
+  const deleteCode = async (c: RegCode) => {
+    setConfirmDialog({
+      title: 'Удалить код регистрации',
+      message: `Код «${c.code}» будет удалён. Это действие нельзя отменить.`,
+      confirmLabel: 'Удалить код',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        const { error } = await supabase.rpc('admin_delete_registration_code', { p_code_id: c.id });
+        if (error) {
+          setError(error.message);
+          return;
+        }
+        setCodes((prev) => prev.filter((x) => x.id !== c.id));
+      },
+    });
+  };
+
   const deleteTeacher = async (id: string, name: string) => {
-    if (!confirm(`Удалить преподавателя «${name}» вместе со всеми занятиями и заданиями?`)) return;
-    const { error } = await supabase.rpc('delete_teacher_admin', { p_teacher_id: id });
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    setTeachers((prev) => prev.filter((t) => t.id !== id));
+    setConfirmDialog({
+      title: 'Удалить раздел преподавателя',
+      message: `Раздел «${name}» со всеми занятиями и заданиями будет удалён без возможности восстановления.`,
+      confirmLabel: 'Удалить раздел',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        const { error } = await supabase.rpc('delete_teacher_admin', { p_teacher_id: id });
+        if (error) {
+          setError(error.message);
+          return;
+        }
+        setTeachers((prev) => prev.filter((t) => t.id !== id));
+      },
+    });
+  };
+
+  const deleteAccount = async (accountId: string, name: string) => {
+    setConfirmDialog({
+      title: 'Удалить аккаунт преподавателя',
+      message: `Аккаунт «${name}» и все его данные будут полностью удалены без возможности восстановления.`,
+      confirmLabel: 'Удалить аккаунт',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        try {
+          const session = (await supabase.auth.getSession()).data.session;
+          if (!session) return;
+          const response = await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-user-account`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+                apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+              },
+              body: JSON.stringify({ userId: accountId }),
+            }
+          );
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || `Ошибка ${response.status}`);
+          }
+          await load();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Не удалось удалить аккаунт');
+        }
+      },
+    });
   };
 
   const toggleAdmin = async (teacherId: string, makeAdmin: boolean) => {
@@ -165,14 +229,12 @@ export default function AdminPanel({ onClose }: Props) {
     }
   };
 
-  const startAssign = (teacherId: string, currentName: string) => {
+  const startAssign = (teacherId: string, _currentName: string) => {
     setAssigningId(teacherId);
-    setAssignName(currentName);
   };
 
   const confirmAssign = async (teacherId: string, ownerId: string) => {
     setAssigningId(null);
-    setAssignName(null);
     const { error } = await supabase.rpc('assign_teacher_owner', {
       p_teacher_id: teacherId,
       p_owner_id: ownerId,
@@ -274,12 +336,12 @@ export default function AdminPanel({ onClose }: Props) {
               <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-slate-700">
                 <ul className="divide-y divide-stone-100 dark:divide-slate-700">
                   {codes.map((c) => (
-                    <li key={c.id} className="flex items-center gap-3 px-3 py-2.5">
-                      <code className="flex-1 rounded-md bg-stone-100 px-2.5 py-1.5 font-mono text-sm font-semibold text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                    <li key={c.id} className="flex items-center gap-2 px-3 py-2.5 sm:gap-3">
+                      <code className="min-w-0 flex-1 truncate rounded-md bg-stone-100 px-2.5 py-1.5 font-mono text-sm font-semibold text-slate-800 dark:bg-slate-700 dark:text-slate-200">
                         {c.code}
                       </code>
                       <span
-                        className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        className={`hidden shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold sm:inline ${
                           c.used
                             ? 'bg-stone-200 text-stone-500 dark:bg-slate-600 dark:text-slate-400'
                             : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
@@ -290,10 +352,17 @@ export default function AdminPanel({ onClose }: Props) {
                       <button
                         onClick={() => copyCode(c.code)}
                         disabled={c.used}
-                        className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:opacity-30 dark:hover:bg-slate-600"
+                        className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:opacity-30 dark:hover:bg-slate-600"
                         title="Копировать"
                       >
                         {copied === c.code ? <Check size={16} className="text-green-600" /> : <Copy size={16} />}
+                      </button>
+                      <button
+                        onClick={() => deleteCode(c)}
+                        className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                        title="Удалить код"
+                      >
+                        <Trash2 size={16} />
                       </button>
                     </li>
                   ))}
@@ -322,7 +391,7 @@ export default function AdminPanel({ onClose }: Props) {
               <div className="overflow-hidden rounded-lg border border-stone-200 dark:border-slate-700">
                 <ul className="divide-y divide-stone-100 dark:divide-slate-700">
                   {accounts.map((a) => (
-                    <li key={a.teacher_id} className="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:flex-nowrap">
+                    <li key={a.teacher_id} className="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:flex-nowrap sm:gap-3">
                       <span
                         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
                           a.is_admin ? 'bg-slate-800 text-white dark:bg-slate-600' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
@@ -330,18 +399,18 @@ export default function AdminPanel({ onClose }: Props) {
                       >
                         {a.is_admin ? <ShieldCheck size={16} /> : <User size={16} />}
                       </span>
-                      <span className="flex-1 text-sm font-medium text-slate-800 dark:text-slate-200">{a.display_name}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-200">{a.display_name}</span>
                       <span
-                        className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
                           a.is_admin ? 'bg-slate-200 text-slate-700 dark:bg-slate-600 dark:text-slate-300' : 'bg-stone-100 text-stone-500 dark:bg-slate-700 dark:text-slate-400'
                         }`}
                       >
-                        {a.is_admin ? 'Админ' : 'Преподаватель'}
+                        {a.is_admin ? 'Админ' : 'Препод.'}
                       </span>
                       <button
                         onClick={() => toggleAdmin(a.teacher_id, !a.is_admin)}
                         disabled={togglingId === a.teacher_id}
-                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                        className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-50 ${
                           a.is_admin
                             ? 'bg-stone-100 text-slate-600 hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600'
                             : 'bg-slate-800 text-white hover:bg-slate-900 dark:bg-slate-600 dark:hover:bg-slate-500'
@@ -356,18 +425,27 @@ export default function AdminPanel({ onClose }: Props) {
                         )}
                       </button>
                       {!a.is_admin && (
-                        <button
-                          onClick={() => resetPassword(a.teacher_id, a.display_name)}
-                          disabled={resettingId === a.teacher_id}
-                          className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:opacity-50 dark:hover:bg-slate-600"
-                          title="Сбросить пароль"
-                        >
-                          {resettingId === a.teacher_id ? (
-                            <Loader2 size={15} className="animate-spin" />
-                          ) : (
-                            <Key size={15} />
-                          )}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => resetPassword(a.teacher_id, a.display_name)}
+                            disabled={resettingId === a.teacher_id}
+                            className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 disabled:opacity-50 dark:hover:bg-slate-600"
+                            title="Сбросить пароль"
+                          >
+                            {resettingId === a.teacher_id ? (
+                              <Loader2 size={15} className="animate-spin" />
+                            ) : (
+                              <Key size={15} />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => deleteAccount(a.teacher_id, a.display_name)}
+                            className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                            title="Удалить аккаунт"
+                          >
+                            <UserX size={16} />
+                          </button>
+                        </>
                       )}
                     </li>
                   ))}
@@ -375,7 +453,7 @@ export default function AdminPanel({ onClose }: Props) {
               </div>
             )}
             <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-              Администратор может управлять правами, сбрасывать пароли и создавать коды регистрации.
+              Администратор может управлять правами, сбрасывать пароли, удалять аккаунты и создавать коды регистрации.
             </p>
           </div>
 
@@ -401,15 +479,16 @@ export default function AdminPanel({ onClose }: Props) {
                         <img
                           src={t.photo_url}
                           alt={t.name}
-                          className="h-9 w-9 shrink-0 rounded-full object-cover"
+                          className="h-12 w-12 shrink-0 rounded-full object-cover"
+                          loading="lazy"
                         />
                       ) : (
-                        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
-                          <User size={16} />
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                          <User size={20} />
                         </span>
                       )}
-                      <div className="flex-1">
-                        <span className="block text-sm font-medium text-slate-800 dark:text-slate-200">{t.name}</span>
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-slate-800 dark:text-slate-200">{t.name}</span>
                         {t.owner_id ? (
                           <span className="mt-0.5 flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                             <Link2 size={11} />
@@ -437,7 +516,7 @@ export default function AdminPanel({ onClose }: Props) {
                       ) : (
                         <button
                           onClick={() => startAssign(t.id, t.name)}
-                          className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-slate-600"
+                          className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-slate-600"
                           title="Привязать к аккаунту"
                         >
                           <Link2 size={15} />
@@ -446,7 +525,7 @@ export default function AdminPanel({ onClose }: Props) {
                       {t.owner_id && (
                         <button
                           onClick={() => unassignOwner(t.id)}
-                          className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-stone-200 hover:text-slate-600 dark:hover:bg-slate-600"
+                          className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-stone-200 hover:text-slate-600 dark:hover:bg-slate-600"
                           title="Отвязать аккаунт"
                         >
                           <User size={15} />
@@ -454,8 +533,8 @@ export default function AdminPanel({ onClose }: Props) {
                       )}
                       <button
                         onClick={() => deleteTeacher(t.id, t.name)}
-                        className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
-                        title="Удалить"
+                        className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                        title="Удалить раздел"
                       >
                         <Trash2 size={16} />
                       </button>
@@ -467,6 +546,17 @@ export default function AdminPanel({ onClose }: Props) {
           </div>
         </div>
       </div>
+
+      {confirmDialog && (
+        <ConfirmDialog
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          confirmLabel={confirmDialog.confirmLabel}
+          danger
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={() => setConfirmDialog(null)}
+        />
+      )}
     </div>
   );
 }

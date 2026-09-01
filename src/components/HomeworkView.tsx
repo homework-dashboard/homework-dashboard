@@ -13,7 +13,8 @@ type MyProfile = {
 };
 
 type Props = {
-  lesson: Lesson;
+  lessonId: string;
+  teacherId: string;
   editMode: boolean;
   isAdmin?: boolean;
   myProfile?: MyProfile | null;
@@ -29,7 +30,8 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: Props) {
+export default function HomeworkView({ lessonId, teacherId, editMode, isAdmin, myProfile }: Props) {
+  const [lesson, setLesson] = useState<Lesson | null>(null);
   const [rows, setRows] = useState<Homework[]>([]);
   const [subjects, setSubjects] = useState<HomeworkSubject[]>([]);
   const [entries, setEntries] = useState<Record<string, Record<string, string>>>({});
@@ -42,27 +44,30 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
   const load = async () => {
     setLoading(true);
     setError(null);
-    const [hwRes, subjRes, entRes] = await Promise.all([
+    const [lessonRes, hwRes, subjRes, entRes] = await Promise.all([
+      supabase.from('lessons').select('*').eq('id', lessonId).maybeSingle(),
       supabase
         .from('homework')
         .select('*')
-        .eq('lesson_id', lesson.id)
+        .eq('lesson_id', lessonId)
         .order('due_date', { ascending: false })
         .order('created_at', { ascending: false }),
       supabase
         .from('homework_subjects')
         .select('*')
-        .eq('lesson_id', lesson.id)
+        .eq('lesson_id', lessonId)
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true }),
       supabase
         .from('homework_entries')
         .select('homework_id, subject_id, content'),
     ]);
-    if (hwRes.error) setError(hwRes.error.message);
+    if (lessonRes.error) setError(lessonRes.error.message);
+    else if (hwRes.error) setError(hwRes.error.message);
     else if (subjRes.error) setError(subjRes.error.message);
     else if (entRes.error) setError(entRes.error.message);
     else {
+      setLesson(lessonRes.data as Lesson | null);
       setRows(hwRes.data ?? []);
       setSubjects(subjRes.data ?? []);
       const entMap: Record<string, Record<string, string>> = {};
@@ -79,19 +84,12 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
     load();
     if (myProfile && !isAdmin) {
       supabase.rpc('get_my_teacher_id').then(({ data }) => {
-        supabase
-          .from('lessons')
-          .select('teacher_id')
-          .eq('id', lesson.id)
-          .maybeSingle()
-          .then(({ data: lessonData }) => {
-            setCanEdit(data === lessonData?.teacher_id);
-          });
+        setCanEdit(data === teacherId);
       });
     } else {
       setCanEdit(!!isAdmin);
     }
-  }, [lesson.id]);
+  }, [lessonId, teacherId]);
 
   const editable = editMode && canEdit;
 
@@ -99,7 +97,7 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
     if (subjects.length > 0) return subjects[0].id;
     const { data, error } = await supabase
       .from('homework_subjects')
-      .insert({ lesson_id: lesson.id, name: lesson.subject || 'Предмет', sort_order: 0 })
+      .insert({ lesson_id: lessonId, name: lesson?.subject || 'Предмет', sort_order: 0 })
       .select()
       .maybeSingle();
     if (error) {
@@ -123,7 +121,7 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
     }
     const { data, error } = await supabase
       .from('homework')
-      .insert({ lesson_id: lesson.id, due_date: today(), solfeggio: '', music_literature: '' })
+      .insert({ lesson_id: lessonId, due_date: today(), solfeggio: '', music_literature: '' })
       .select()
       .maybeSingle();
     setSaving(false);
@@ -163,7 +161,11 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
   const removeRow = async (r: Homework) => {
     if (!confirm('Удалить эту строку задания?')) return;
     setRows((prev) => prev.filter((x) => x.id !== r.id));
-    await supabase.from('homework').delete().eq('id', r.id);
+    const { error } = await supabase.from('homework').delete().eq('id', r.id);
+    if (error) {
+      setError(error.message);
+      load();
+    }
   };
 
   const renameSubject = async (s: HomeworkSubject, name: string) => {
@@ -177,7 +179,7 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
     setSaving(true);
     const { data, error } = await supabase
       .from('homework_subjects')
-      .insert({ lesson_id: lesson.id, name, sort_order: subjects.length })
+      .insert({ lesson_id: lessonId, name, sort_order: subjects.length })
       .select()
       .maybeSingle();
     setSaving(false);
@@ -192,15 +194,21 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
   const removeSubject = async (s: HomeworkSubject) => {
     if (!confirm(`Удалить предмет «${s.name || 'без названия'}» и все задания в нём?`)) return;
     setSubjects((prev) => prev.filter((x) => x.id !== s.id));
-    await supabase.from('homework_subjects').delete().eq('id', s.id);
+    const { error } = await supabase.from('homework_subjects').delete().eq('id', s.id);
+    if (error) {
+      setError(error.message);
+      load();
+    }
   };
 
-  const title = [
-    weekdayName(lesson.weekday),
-    formatTime(lesson.start_time),
-    lesson.class_name,
-    lesson.classroom,
-  ].filter(Boolean).join(' · ') || 'Класс';
+  const title = lesson
+    ? [
+        weekdayName(lesson.weekday),
+        formatTime(lesson.start_time),
+        lesson.class_name,
+        lesson.classroom,
+      ].filter(Boolean).join(' · ') || 'Класс'
+    : '…';
 
   const colCount = subjects.length;
   const dateColW = 'minmax(90px, 110px)';
@@ -219,8 +227,8 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
   return (
     <section>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-display text-3xl font-semibold text-slate-900 dark:text-slate-100">{title}</h1>
+        <div className="min-w-0">
+          <h1 className="truncate font-display text-2xl font-semibold text-slate-900 sm:text-3xl dark:text-slate-100">{title}</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Домашние задания по датам.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -355,12 +363,12 @@ export default function HomeworkView({ lesson, editMode, isAdmin, myProfile }: P
                 onChange={(e) => setNewSubjectName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addSubject()}
                 placeholder="Новый предмет"
-                className="rounded-lg border border-stone-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
               />
               <button
                 onClick={addSubject}
                 disabled={!newSubjectName.trim() || saving}
-                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-40"
+                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-40"
               >
                 <Plus size={15} /> Добавить предмет
               </button>

@@ -1,17 +1,17 @@
-import { useEffect, useState } from 'react';
-import { Music, Home, Pencil, Eye, LogIn, LogOut, ShieldCheck, Moon, Sun, UserCircle } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Music, Home, Pencil, Eye, LogIn, LogOut, ShieldCheck, Moon, Sun, UserCircle, Trash2, UserX } from 'lucide-react';
 import type { Teacher, Lesson } from '@/types';
 import { weekdayName, formatTime } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/lib/useTheme';
+import { useRouter } from '@/lib/useRouter';
 import TeachersView from '@/components/TeachersView';
 import LessonsView from '@/components/LessonsView';
 import HomeworkView from '@/components/HomeworkView';
 import AuthModal from '@/components/AuthModal';
 import AdminPanel from '@/components/AdminPanel';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
-
-type View = 'teachers' | 'lessons' | 'homework';
+import ConfirmDialog from '@/components/ConfirmDialog';
 
 type MyProfile = {
   teacher_id: string;
@@ -22,39 +22,49 @@ type MyProfile = {
 
 function App() {
   const { theme, toggle } = useTheme();
-  const [view, setView] = useState<View>('teachers');
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
-  const [lesson, setLesson] = useState<Lesson | null>(null);
+  const { route, navigate } = useRouter();
   const [editMode, setEditMode] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [session, setSession] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
   const [forcePasswordChange, setForcePasswordChange] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<null | {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    danger: boolean;
+    onConfirm: () => void;
+  }>(null);
 
-  const checkAdmin = async () => {
+  const checkAdmin = useCallback(async () => {
     const { data } = await supabase.rpc('is_current_admin');
     setIsAdmin(!!data);
     return !!data;
-  };
+  }, []);
 
-  const loadProfile = async () => {
+  const loadProfile = useCallback(async () => {
     const { data } = await supabase.rpc('get_my_teacher_profile') as { data: MyProfile[] | null };
     if (data && data.length > 0) {
       setMyProfile(data[0]);
       if (data[0].must_change_password) {
         setForcePasswordChange(true);
       }
+    } else {
+      setMyProfile(null);
     }
-  };
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(!!data.session);
       if (data.session) {
-        checkAdmin();
-        loadProfile();
+        (async () => {
+          await checkAdmin();
+          await loadProfile();
+        })();
       }
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event, sess) => {
@@ -66,6 +76,9 @@ function App() {
           if (event === 'PASSWORD_RECOVERY') {
             setForcePasswordChange(true);
           }
+          if (event === 'PASSWORD_RECOVERY' || event === 'USER_UPDATED') {
+            setForcePasswordChange(true);
+          }
         })();
       } else {
         setIsAdmin(false);
@@ -75,51 +88,104 @@ function App() {
       }
     });
     return () => sub.subscription.unsubscribe();
-  }, []);
+  }, [checkAdmin, loadProfile]);
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    setEditMode(false);
-    setIsAdmin(false);
-    setMyProfile(null);
+    window.location.reload();
   };
 
   const openTeacher = (t: Teacher) => {
-    setTeacher(t);
-    setLesson(null);
-    setView('lessons');
+    navigate({ view: 'lessons', teacherId: t.id });
   };
 
   const openLesson = (l: Lesson) => {
-    setLesson(l);
-    setView('homework');
+    if (route.view === 'lessons') {
+      navigate({ view: 'homework', teacherId: route.teacherId, lessonId: l.id });
+    }
   };
 
-  const goTeachers = () => {
-    setView('teachers');
-    setTeacher(null);
-    setLesson(null);
-  };
+  const goTeachers = () => navigate({ view: 'teachers' });
 
   const goLessons = () => {
-    if (!teacher) return goTeachers();
-    setView('lessons');
-    setLesson(null);
+    if (route.view !== 'teachers') {
+      navigate({ view: 'lessons', teacherId: route.view === 'lessons' ? route.teacherId : route.teacherId });
+    } else {
+      goTeachers();
+    }
   };
+
+  const deleteMySection = async () => {
+    setConfirmDialog({
+      title: 'Удалить раздел преподавателя',
+      message: 'Ваш раздел преподавателя со всеми занятиями и заданиями будет удалён без возможности восстановления. Продолжить?',
+      confirmLabel: 'Удалить раздел',
+      danger: true,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        const { error } = await supabase.rpc('delete_my_teacher_section');
+        if (error) {
+          alert(error.message);
+          return;
+        }
+        await loadProfile();
+        window.location.reload();
+      },
+    });
+  };
+
+  const deleteMyAccount = async () => {
+    setConfirmDialog({
+      title: 'Удалить профиль',
+      message: 'Ваш профиль, раздел преподавателя и все данные будут полностью удалены без возможности восстановления. Продолжить?',
+      confirmLabel: 'Удалить профиль',
+      danger: true,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        const session = (await supabase.auth.getSession()).data.session;
+        if (!session) return;
+        try {
+          const response = await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-user-account`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+                apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+              },
+              body: JSON.stringify({ userId: session.user.id }),
+            }
+          );
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || `Ошибка ${response.status}`);
+          }
+          await supabase.auth.signOut();
+          window.location.reload();
+        } catch (err) {
+          alert(err instanceof Error ? err.message : 'Не удалось удалить профиль');
+        }
+      },
+    });
+  };
+
+  const currentTeacherId = route.view !== 'teachers' ? route.teacherId : null;
+  const currentLessonId = route.view === 'homework' ? route.lessonId : null;
 
   return (
     <div className="min-h-screen bg-stone-100 transition-colors dark:bg-slate-900">
-      <header className="sticky top-0 z-10 border-b border-stone-200 bg-white/85 backdrop-blur dark:border-slate-700 dark:bg-slate-800/85">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
+      <header className="sticky top-0 z-20 border-b border-stone-200 bg-white/85 backdrop-blur dark:border-slate-700 dark:bg-slate-800/85">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
           <button
             onClick={goTeachers}
             className="group flex items-center gap-3 text-left"
           >
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-600 text-white shadow-sm transition-transform group-hover:scale-105">
-              <Music size={22} strokeWidth={2} />
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-600 text-white shadow-sm transition-transform group-hover:scale-105 sm:h-11 sm:w-11">
+              <Music size={20} strokeWidth={2} />
             </span>
             <span>
-              <span className="block font-display text-xl font-semibold leading-none text-slate-900 sm:text-2xl dark:text-slate-100">
+              <span className="block font-display text-lg font-semibold leading-none text-slate-900 sm:text-2xl dark:text-slate-100">
                 Расписание и задания
               </span>
               <span className="hidden text-xs font-medium uppercase tracking-widest text-amber-700 sm:block dark:text-amber-400">
@@ -128,7 +194,7 @@ function App() {
             </span>
           </button>
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
             <button
               onClick={toggle}
               className="flex items-center justify-center rounded-full bg-stone-100 p-2.5 text-slate-600 ring-1 ring-inset ring-stone-300 transition-colors hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600"
@@ -149,7 +215,7 @@ function App() {
                 )}
                 <button
                   onClick={() => setEditMode((v) => !v)}
-                  className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                  className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition-colors sm:px-4 ${
                     editMode
                       ? 'bg-amber-600 text-white hover:bg-amber-700'
                       : 'bg-stone-100 text-slate-700 ring-1 ring-inset ring-stone-300 hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600 dark:hover:bg-slate-600'
@@ -164,8 +230,15 @@ function App() {
                   </span>
                 )}
                 <button
+                  onClick={() => setChangePasswordOpen(true)}
+                  className="flex items-center justify-center rounded-full bg-stone-100 p-2.5 text-slate-600 ring-1 ring-inset ring-stone-300 transition-colors hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600 sm:hidden"
+                  title="Сменить пароль"
+                >
+                  <ShieldCheck size={16} />
+                </button>
+                <button
                   onClick={signOut}
-                  className="flex items-center gap-2 rounded-full bg-stone-100 px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-inset ring-stone-300 transition-colors hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600"
+                  className="flex items-center gap-2 rounded-full bg-stone-100 px-3 py-2 text-sm font-semibold text-slate-600 ring-1 ring-inset ring-stone-300 transition-colors hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600 sm:px-4"
                 >
                   <LogOut size={16} /> <span className="hidden sm:inline">Выйти</span>
                 </button>
@@ -173,26 +246,52 @@ function App() {
             ) : (
               <button
                 onClick={() => setAuthOpen(true)}
-                className="flex items-center gap-2 rounded-full bg-stone-100 px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-inset ring-stone-300 transition-colors hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600"
+                className="flex items-center gap-2 rounded-full bg-stone-100 px-3 py-2 text-sm font-semibold text-slate-600 ring-1 ring-inset ring-stone-300 transition-colors hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600 sm:px-4"
               >
-                <LogIn size={16} /> <span className="hidden sm:inline">Вход</span><span className="sm:hidden">Вход</span>
+                <LogIn size={16} /> <span>Вход</span>
               </button>
             )}
           </div>
         </div>
+
+        {/* Secondary action bar for logged-in users */}
+        {session && myProfile && (
+          <div className="border-t border-stone-200 dark:border-slate-700">
+            <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-2 sm:px-6">
+              <button
+                onClick={deleteMySection}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+              >
+                <Trash2 size={13} /> <span className="hidden sm:inline">Удалить мой раздел</span><span className="sm:hidden">Раздел</span>
+              </button>
+              <button
+                onClick={deleteMyAccount}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+              >
+                <UserX size={13} /> <span className="hidden sm:inline">Удалить профиль</span><span className="sm:hidden">Профиль</span>
+              </button>
+              <button
+                onClick={() => setChangePasswordOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:text-slate-400 dark:hover:bg-amber-900/30 dark:hover:text-amber-400 sm:hidden"
+              >
+                <ShieldCheck size={13} /> Пароль
+              </button>
+            </div>
+          </div>
+        )}
       </header>
 
-      <nav className="mx-auto max-w-5xl px-4 pt-6 sm:px-6">
+      <nav className="mx-auto max-w-5xl px-4 pt-4 sm:px-6 sm:pt-6">
         <ol className="flex flex-wrap items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
           <li>
             <button
               onClick={goTeachers}
               className="flex items-center gap-1 rounded-md px-2 py-1 font-medium hover:bg-stone-200 hover:text-slate-800 dark:hover:bg-slate-700 dark:hover:text-slate-200"
             >
-              <Home size={14} /> Преподаватели
+              <Home size={14} /> <span className="hidden sm:inline">Преподаватели</span>
             </button>
           </li>
-          {teacher && (
+          {route.view !== 'teachers' && (
             <>
               <li className="text-stone-400 dark:text-slate-600">/</li>
               <li>
@@ -200,36 +299,49 @@ function App() {
                   onClick={goLessons}
                   className="rounded-md px-2 py-1 font-medium hover:bg-stone-200 hover:text-slate-800 dark:hover:bg-slate-700 dark:hover:text-slate-200"
                 >
-                  {teacher.name}
+                  Расписание
                 </button>
               </li>
             </>
           )}
-          {lesson && view === 'homework' && (
+          {route.view === 'homework' && (
             <>
               <li className="text-stone-400 dark:text-slate-600">/</li>
               <li className="rounded-md px-2 py-1 font-medium text-slate-800 dark:text-slate-200">
-                {[
-                  weekdayName(lesson.weekday),
-                  formatTime(lesson.start_time),
-                  lesson.class_name,
-                  lesson.classroom,
-                ].filter(Boolean).join(' · ') || 'Класс'}
+                Задание
               </li>
             </>
           )}
         </ol>
       </nav>
 
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-        {view === 'teachers' && (
-          <TeachersView editMode={editMode} onOpen={openTeacher} isAdmin={isAdmin} myProfile={myProfile} />
+      <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6 sm:py-6">
+        {route.view === 'teachers' && (
+          <TeachersView
+            editMode={editMode}
+            onOpen={openTeacher}
+            isAdmin={isAdmin}
+            myProfile={myProfile}
+            onDeletedSection={() => loadProfile()}
+          />
         )}
-        {view === 'lessons' && teacher && (
-          <LessonsView teacher={teacher} editMode={editMode} onOpen={openLesson} isAdmin={isAdmin} myProfile={myProfile} />
+        {route.view === 'lessons' && (
+          <LessonsView
+            teacherId={route.teacherId}
+            editMode={editMode}
+            onOpen={openLesson}
+            isAdmin={isAdmin}
+            myProfile={myProfile}
+          />
         )}
-        {view === 'homework' && lesson && (
-          <HomeworkView lesson={lesson} editMode={editMode} isAdmin={isAdmin} myProfile={myProfile} />
+        {route.view === 'homework' && (
+          <HomeworkView
+            lessonId={route.lessonId}
+            teacherId={route.teacherId}
+            editMode={editMode}
+            isAdmin={isAdmin}
+            myProfile={myProfile}
+          />
         )}
       </main>
 
@@ -240,19 +352,40 @@ function App() {
       <AuthModal
         open={authOpen}
         onClose={() => setAuthOpen(false)}
-        onAuthed={() => setEditMode(true)}
+        onAuthed={() => {
+          window.location.reload();
+        }}
       />
 
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
+
+      {changePasswordOpen && session && !forcePasswordChange && (
+        <ChangePasswordModal
+          onClose={() => setChangePasswordOpen(false)}
+          onChanged={() => {
+            window.location.reload();
+          }}
+        />
+      )}
 
       {forcePasswordChange && session && (
         <ChangePasswordModal
           forced
           onClose={() => setForcePasswordChange(false)}
           onChanged={() => {
-            setForcePasswordChange(false);
-            setMyProfile((prev) => prev ? { ...prev, must_change_password: false } : prev);
+            window.location.reload();
           }}
+        />
+      )}
+
+      {confirmDialog && (
+        <ConfirmDialog
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          confirmLabel={confirmDialog.confirmLabel}
+          danger={confirmDialog.danger}
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={() => setConfirmDialog(null)}
         />
       )}
     </div>

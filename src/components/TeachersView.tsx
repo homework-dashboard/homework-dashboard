@@ -16,9 +16,10 @@ type Props = {
   onOpen: (t: Teacher) => void;
   isAdmin?: boolean;
   myProfile?: MyProfile | null;
+  onDeletedSection?: () => void;
 };
 
-export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: Props) {
+export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onDeletedSection }: Props) {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,7 +123,16 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
   const remove = async (t: Teacher) => {
     if (!confirm(`Удалить преподавателя «${t.name}» вместе со всеми заданиями?`)) return;
     setTeachers((prev) => prev.filter((x) => x.id !== t.id));
-    await supabase.from('teachers').delete().eq('id', t.id);
+    const { error } = await supabase.from('teachers').delete().eq('id', t.id);
+    if (error) {
+      setError(error.message);
+      load();
+      return;
+    }
+    if (t.id === myTeacherId) {
+      setMyTeacherId(null);
+      onDeletedSection?.();
+    }
   };
 
   const triggerUpload = (teacherId: string) => {
@@ -130,30 +140,74 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
     fileRef.current?.click();
   };
 
+  const normalizePhoto = (file: File): Promise<Blob> => new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      const side = Math.min(image.naturalWidth, image.naturalHeight);
+      const sourceX = (image.naturalWidth - side) / 2;
+      const sourceY = (image.naturalHeight - side) / 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('Не удалось подготовить фото'));
+        return;
+      }
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, sourceX, sourceY, side, side, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(objectUrl);
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('Не удалось сохранить фото'));
+      }, 'image/jpeg', 0.94);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Не удалось открыть выбранное фото'));
+    };
+    image.src = objectUrl;
+  });
+
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !uploadFor) return;
     setUploadingId(uploadFor);
-    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-    const path = `${uploadFor}/${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage
-      .from('teacher-photos')
-      .upload(path, file, { upsert: true });
-    if (upErr) {
-      setError(upErr.message);
+    try {
+      const normalizedPhoto = await normalizePhoto(file);
+      const path = `${uploadFor}/${Date.now()}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from('teacher-photos')
+        .upload(path, normalizedPhoto, { upsert: true, contentType: 'image/jpeg', cacheControl: '31536000' });
+      if (upErr) {
+        setError(upErr.message);
+        return;
+      }
+      const { data: pub } = supabase.storage.from('teacher-photos').getPublicUrl(path);
+      const photoUrl = pub.publicUrl;
+      setTeachers((prev) =>
+        prev.map((x) => (x.id === uploadFor ? { ...x, photo_url: photoUrl } : x))
+      );
+      const { error: updateError } = await supabase
+        .from('teachers')
+        .update({ photo_url: photoUrl })
+        .eq('id', uploadFor);
+      if (updateError) {
+        setError(updateError.message);
+        return;
+      }
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Не удалось загрузить фото');
+    } finally {
       setUploadingId(null);
+      setUploadFor(null);
       e.target.value = '';
-      return;
     }
-    const { data: pub } = supabase.storage.from('teacher-photos').getPublicUrl(path);
-    const photoUrl = pub.publicUrl;
-    setTeachers((prev) =>
-      prev.map((x) => (x.id === uploadFor ? { ...x, photo_url: photoUrl } : x))
-    );
-    await supabase.from('teachers').update({ photo_url: photoUrl }).eq('id', uploadFor);
-    setUploadingId(null);
-    setUploadFor(null);
-    e.target.value = '';
   };
 
   const removePhoto = async (t: Teacher) => {
@@ -162,19 +216,20 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
   };
 
   const Avatar = ({ t, size }: { t: Teacher; size: 'sm' | 'lg' }) => {
-    const dim = size === 'lg' ? 'h-12 w-12' : 'h-10 w-10';
+    const dim = size === 'lg' ? 'h-[72px] w-[72px]' : 'h-16 w-16';
     if (t.photo_url) {
       return (
         <img
           src={t.photo_url}
           alt={t.name}
           className={`${dim} shrink-0 rounded-full object-cover ring-2 ring-amber-100 dark:ring-amber-900/50`}
+          loading="lazy"
         />
       );
     }
     return (
       <span className={`flex ${dim} shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400`}>
-        <User size={size === 'lg' ? 22 : 18} />
+        <User size={size === 'lg' ? 32 : 26} />
       </span>
     );
   };
@@ -190,7 +245,7 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
       />
 
       <div className="mb-5">
-        <h1 className="font-display text-3xl font-semibold text-slate-900 dark:text-slate-100">Преподаватели</h1>
+        <h1 className="font-display text-2xl font-semibold text-slate-900 sm:text-3xl dark:text-slate-100">Преподаватели</h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Выберите преподавателя, чтобы открыть его расписание и задания.
         </p>
@@ -206,12 +261,12 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
             {teachers.map((t) => (
               <li key={t.id} className="group">
                 {canEditTeacher(t) ? (
-                  <div className="flex items-center gap-3 px-4 py-3 sm:px-5">
+                  <div className="flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-5">
                     <div className="relative shrink-0">
                       <Avatar t={t} size="lg" />
                       {uploadingId === t.id && (
                         <span className="absolute inset-0 flex items-center justify-center rounded-full bg-white/70 dark:bg-slate-800/70">
-                          <Loader2 size={18} className="animate-spin text-amber-600" />
+                          <Loader2 size={24} className="animate-spin text-amber-600" />
                         </span>
                       )}
                     </div>
@@ -221,11 +276,11 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
                         const v = e.target.value.trim();
                         if (v && v !== t.name) rename(t, v);
                       }}
-                      className="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                      className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
                     />
                     <button
                       onClick={() => triggerUpload(t.id)}
-                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-slate-600"
+                      className="shrink-0 rounded-lg p-2 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-slate-600"
                       title="Загрузить фото"
                     >
                       <Camera size={18} />
@@ -233,41 +288,39 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
                     {t.photo_url && (
                       <button
                         onClick={() => removePhoto(t)}
-                        className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                        className="shrink-0 rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
                         title="Удалить фото"
                       >
                         <Trash2 size={16} />
                       </button>
                     )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => remove(t)}
-                        className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
-                        title="Удалить преподавателя"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => remove(t)}
+                      className="shrink-0 rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
+                      title="Удалить преподавателя"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
                 ) : editMode && !isAdmin && t.id !== myTeacherId ? (
                   <button
                     onClick={() => onOpen(t)}
-                    className="flex w-full items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-amber-50/60 sm:px-5 dark:hover:bg-slate-700/50"
+                    className="flex w-full items-center gap-4 px-4 py-4 text-left transition-colors hover:bg-amber-50/60 sm:px-5 dark:hover:bg-slate-700/50"
                   >
                     <Avatar t={t} size="lg" />
-                    <span className="flex-1 text-lg font-medium text-slate-800 dark:text-slate-200">{t.name}</span>
-                    <Lock size={16} className="text-stone-300 dark:text-slate-600" />
+                    <span className="min-w-0 flex-1 truncate text-lg font-medium text-slate-800 sm:text-xl dark:text-slate-200">{t.name}</span>
+                    <Lock size={16} className="shrink-0 text-stone-300 dark:text-slate-600" />
                   </button>
                 ) : (
                   <button
                     onClick={() => onOpen(t)}
-                    className="flex w-full items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-amber-50/60 sm:px-5 dark:hover:bg-slate-700/50"
+                    className="flex w-full items-center gap-4 px-4 py-4 text-left transition-colors hover:bg-amber-50/60 sm:px-5 dark:hover:bg-slate-700/50"
                   >
                     <Avatar t={t} size="lg" />
-                    <span className="flex-1 text-lg font-medium text-slate-800 dark:text-slate-200">{t.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-lg font-medium text-slate-800 sm:text-xl dark:text-slate-200">{t.name}</span>
                     <ChevronRight
                       size={20}
-                      className="text-stone-300 transition-transform group-hover:translate-x-1 group-hover:text-amber-600 dark:text-slate-600 dark:group-hover:text-amber-400"
+                      className="shrink-0 text-stone-300 transition-transform group-hover:translate-x-1 group-hover:text-amber-600 dark:text-slate-600 dark:group-hover:text-amber-400"
                     />
                   </button>
                 )}
@@ -282,12 +335,12 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addTeacher()}
                 placeholder="Имя нового преподавателя"
-                className="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
               />
               <button
                 onClick={addTeacher}
                 disabled={!newName.trim() || saving}
-                className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-40"
+                className="flex shrink-0 items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-40"
               >
                 <Plus size={16} /> Добавить
               </button>
@@ -307,12 +360,12 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile }: P
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && createOwnSection()}
               placeholder="Ваше имя для табло"
-              className="flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-amber-700 dark:bg-slate-700 dark:text-slate-100"
+              className="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-amber-700 dark:bg-slate-700 dark:text-slate-100"
             />
             <button
               onClick={createOwnSection}
               disabled={!newName.trim() || saving}
-              className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-40"
+              className="flex shrink-0 items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-40"
             >
               <Plus size={16} /> Создать раздел
             </button>

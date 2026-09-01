@@ -115,7 +115,6 @@ export default function AuthModal({ open, onClose, onAuthed }: Props) {
 
       setLoading(false);
       onAuthed();
-      close();
     } else {
       const { error: signInErr } = await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -127,7 +126,6 @@ export default function AuthModal({ open, onClose, onAuthed }: Props) {
         return;
       }
       onAuthed();
-      close();
     }
   };
 
