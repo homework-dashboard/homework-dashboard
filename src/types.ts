@@ -5,6 +5,7 @@ export type Teacher = {
   sort_order: number;
   created_at: string;
   owner_id?: string | null;
+  slug?: string | null;
 };
 
 export type Lesson = {
@@ -17,6 +18,7 @@ export type Lesson = {
   start_time: string | null;
   sort_order: number;
   created_at: string;
+  slug?: string | null;
 };
 
 export const WEEKDAYS = [

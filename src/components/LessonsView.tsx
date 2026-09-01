@@ -13,7 +13,7 @@ type MyProfile = {
 };
 
 type Props = {
-  teacherId: string;
+  teacherSlug: string;
   editMode: boolean;
   onOpen: (l: Lesson) => void;
   isAdmin?: boolean;
@@ -23,7 +23,7 @@ type Props = {
 const COLS = 'grid grid-cols-[1.2fr_0.8fr_1fr_1fr_auto] gap-3';
 
 export default function LessonsView({
-  teacherId,
+  teacherSlug,
   editMode,
   onOpen,
   isAdmin,
@@ -40,43 +40,58 @@ export default function LessonsView({
   const [saving, setSaving] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
 
-  const load = async () => {
+  useEffect(() => {
     setLoading(true);
     setError(null);
 
-    const [tRes, lRes] = await Promise.all([
-      supabase.from('teachers').select('*').eq('id', teacherId).maybeSingle(),
-      supabase
+    (async () => {
+      const tRes = await supabase
+        .from('teachers')
+        .select('*')
+        .eq('slug', teacherSlug)
+        .maybeSingle();
+
+      if (tRes.error) {
+        setError(tRes.error.message);
+        setLoading(false);
+        return;
+      }
+
+      if (!tRes.data) {
+        setError('Преподаватель не найден');
+        setLoading(false);
+        return;
+      }
+
+      const teacherData = tRes.data as Teacher;
+      setTeacher(teacherData);
+
+      const lRes = await supabase
         .from('lessons')
         .select('*')
-        .eq('teacher_id', teacherId)
+        .eq('teacher_id', teacherData.id)
         .order('weekday', { ascending: true, nullsFirst: false })
         .order('start_time', { ascending: true, nullsFirst: false })
         .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: true }),
-    ]);
+        .order('created_at', { ascending: true });
 
-    if (tRes.error) setError(tRes.error.message);
-    else if (lRes.error) setError(lRes.error.message);
-    else {
-      setTeacher(tRes.data as Teacher | null);
-      setLessons(lRes.data ?? []);
-    }
+      if (lRes.error) {
+        setError(lRes.error.message);
+      } else {
+        setLessons(lRes.data ?? []);
+      }
 
-    setLoading(false);
-  };
+      setLoading(false);
 
-  useEffect(() => {
-    load();
-
-    if (myProfile && !isAdmin) {
-      supabase.rpc('get_my_teacher_id').then(({ data }) => {
-        setCanEdit(data === teacherId);
-      });
-    } else {
-      setCanEdit(!!isAdmin);
-    }
-  }, [teacherId]);
+      if (myProfile && !isAdmin) {
+        supabase.rpc('get_my_teacher_id').then(({ data }) => {
+          setCanEdit(data === teacherData.id);
+        });
+      } else {
+        setCanEdit(!!isAdmin);
+      }
+    })();
+  }, [teacherSlug]);
 
   const editable = editMode && canEdit;
 
@@ -107,14 +122,14 @@ export default function LessonsView({
     const class_name = newClass.trim();
     const classroom = newClassroom.trim();
 
-    if ((!class_name && !classroom) || saving || !editable) return;
+    if ((!class_name && !classroom) || saving || !editable || !teacher) return;
 
     setSaving(true);
 
     const { data, error } = await supabase
       .from('lessons')
       .insert({
-        teacher_id: teacherId,
+        teacher_id: teacher.id,
         class_name,
         classroom: classroom || null,
         weekday: Number(newWeekday) || 1,
@@ -157,7 +172,6 @@ export default function LessonsView({
     const { error } = await supabase.from('lessons').delete().eq('id', l.id);
     if (error) {
       setError(error.message);
-      load();
     }
   };
 
@@ -272,7 +286,7 @@ export default function LessonsView({
                             patch(l, 'classroom', v || null);
                           }
                         }}
-                        className="rounded-lg border border-stone-300 px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                        className="rounded-lg border border-stone-300 px-2 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
                       />
 
                       <button
@@ -370,7 +384,7 @@ export default function LessonsView({
                 onChange={(e) => setNewClass(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addLesson()}
                 placeholder="Класс"
-                className="rounded-lg border border-stone-300 px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                className="rounded-lg border border-stone-300 px-2 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
               />
 
               <input
@@ -378,7 +392,7 @@ export default function LessonsView({
                 onChange={(e) => setNewClassroom(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addLesson()}
                 placeholder="Кабинет"
-                className="rounded-lg border border-stone-300 px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                className="rounded-lg border border-stone-300 px-2 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
               />
 
               <button

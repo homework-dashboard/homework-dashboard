@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Music, Home, Pencil, Eye, LogIn, LogOut, ShieldCheck, Moon, Sun, UserCircle, Trash2, UserX } from 'lucide-react';
 import type { Teacher, Lesson } from '@/types';
-import { weekdayName, formatTime } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/lib/useTheme';
 import { useRouter } from '@/lib/useRouter';
@@ -95,21 +94,55 @@ function App() {
     window.location.reload();
   };
 
+  // Redirect legacy UUID-based URLs to new slug-based URLs
+  useEffect(() => {
+    if (route.view === 'lessons-legacy') {
+      (async () => {
+        const { data } = await supabase
+          .from('teachers')
+          .select('slug')
+          .eq('id', route.teacherId)
+          .maybeSingle();
+        if (data?.slug) {
+          navigate({ view: 'lessons', teacherSlug: data.slug });
+        } else {
+          navigate({ view: 'teachers' });
+        }
+      })();
+    } else if (route.view === 'homework-legacy') {
+      (async () => {
+        const [teacherRes, lessonRes] = await Promise.all([
+          supabase.from('teachers').select('slug').eq('id', route.teacherId).maybeSingle(),
+          supabase.from('lessons').select('slug').eq('id', route.lessonId).maybeSingle(),
+        ]);
+        if (teacherRes.data?.slug && lessonRes.data?.slug) {
+          navigate({ view: 'homework', teacherSlug: teacherRes.data.slug, lessonSlug: lessonRes.data.slug });
+        } else if (teacherRes.data?.slug) {
+          navigate({ view: 'lessons', teacherSlug: teacherRes.data.slug });
+        } else {
+          navigate({ view: 'teachers' });
+        }
+      })();
+    }
+  }, [route, navigate]);
+
   const openTeacher = (t: Teacher) => {
-    navigate({ view: 'lessons', teacherId: t.id });
+    if (t.slug) {
+      navigate({ view: 'lessons', teacherSlug: t.slug });
+    }
   };
 
   const openLesson = (l: Lesson) => {
-    if (route.view === 'lessons') {
-      navigate({ view: 'homework', teacherId: route.teacherId, lessonId: l.id });
+    if (route.view === 'lessons' && l.slug) {
+      navigate({ view: 'homework', teacherSlug: route.teacherSlug, lessonSlug: l.slug });
     }
   };
 
   const goTeachers = () => navigate({ view: 'teachers' });
 
   const goLessons = () => {
-    if (route.view !== 'teachers') {
-      navigate({ view: 'lessons', teacherId: route.view === 'lessons' ? route.teacherId : route.teacherId });
+    if (route.view === 'lessons' || route.view === 'homework') {
+      navigate({ view: 'lessons', teacherSlug: route.teacherSlug });
     } else {
       goTeachers();
     }
@@ -169,9 +202,6 @@ function App() {
       },
     });
   };
-
-  const currentTeacherId = route.view !== 'teachers' ? route.teacherId : null;
-  const currentLessonId = route.view === 'homework' ? route.lessonId : null;
 
   return (
     <div className="min-h-screen bg-stone-100 transition-colors dark:bg-slate-900">
@@ -291,7 +321,7 @@ function App() {
               <Home size={14} /> <span className="hidden sm:inline">Преподаватели</span>
             </button>
           </li>
-          {route.view !== 'teachers' && (
+          {route.view !== 'teachers' && route.view !== 'lessons-legacy' && route.view !== 'homework-legacy' && (
             <>
               <li className="text-stone-400 dark:text-slate-600">/</li>
               <li>
@@ -304,7 +334,7 @@ function App() {
               </li>
             </>
           )}
-          {route.view === 'homework' && (
+          {(route.view === 'homework' || route.view === 'homework-legacy') && (
             <>
               <li className="text-stone-400 dark:text-slate-600">/</li>
               <li className="rounded-md px-2 py-1 font-medium text-slate-800 dark:text-slate-200">
@@ -327,7 +357,7 @@ function App() {
         )}
         {route.view === 'lessons' && (
           <LessonsView
-            teacherId={route.teacherId}
+            teacherSlug={route.teacherSlug}
             editMode={editMode}
             onOpen={openLesson}
             isAdmin={isAdmin}
@@ -336,8 +366,8 @@ function App() {
         )}
         {route.view === 'homework' && (
           <HomeworkView
-            lessonId={route.lessonId}
-            teacherId={route.teacherId}
+            lessonSlug={route.lessonSlug}
+            teacherSlug={route.teacherSlug}
             editMode={editMode}
             isAdmin={isAdmin}
             myProfile={myProfile}
