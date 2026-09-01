@@ -9,9 +9,11 @@ export type Route =
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function parseHash(): Route {
-  const hash = window.location.hash.replace(/^#\/?/, '');
-  const parts = hash.split('/').filter(Boolean);
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+function parsePath(): Route {
+  const path = window.location.pathname.slice(BASE.length) || '/';
+  const parts = path.split('/').filter(Boolean);
 
   // New hierarchical URLs: prepodavateli/{teacher}/{lesson}
   if (parts.length >= 3 && parts[0] === 'prepodavateli') {
@@ -24,7 +26,7 @@ function parseHash(): Route {
     return { view: 'teachers' };
   }
 
-  // Legacy slug URLs with /zadanie/ segment (prepodavateli/{teacher}/zadanie/{lesson})
+  // Legacy slug URLs with /zadanie/ segment
   if (parts.length >= 4 && parts[0] === 'prepodavateli' && parts[2] === 'zadanie') {
     return { view: 'homework', teacherSlug: parts[1], lessonSlug: parts[3] };
   }
@@ -40,28 +42,44 @@ function parseHash(): Route {
   return { view: 'teachers' };
 }
 
-export function routeToHash(route: Route): string {
-  if (route.view === 'homework') return `#/prepodavateli/${route.teacherSlug}/${route.lessonSlug}`;
-  if (route.view === 'lessons') return `#/prepodavateli/${route.teacherSlug}`;
-  return '#/prepodavateli';
+export function routeToPath(route: Route): string {
+  if (route.view === 'homework') return `${BASE}/prepodavateli/${route.teacherSlug}/${route.lessonSlug}`;
+  if (route.view === 'lessons') return `${BASE}/prepodavateli/${route.teacherSlug}`;
+  return `${BASE}/prepodavateli`;
 }
 
 export function useRouter() {
-  const [route, setRoute] = useState<Route>(() => parseHash());
+  const [route, setRoute] = useState<Route>(() => {
+    // Redirect old hash-based URLs to clean paths
+    if (window.location.hash) {
+      const hash = window.location.hash.replace(/^#\/?/, '');
+      const parts = hash.split('/').filter(Boolean);
+      if (parts.length >= 3 && parts[0] === 'prepodavateli') {
+        const cleanPath = `${BASE}/prepodavateli/${parts[1]}/${parts[2]}`;
+        window.history.replaceState(null, '', cleanPath);
+      } else if (parts.length >= 2 && parts[0] === 'prepodavateli') {
+        const cleanPath = `${BASE}/prepodavateli/${parts[1]}`;
+        window.history.replaceState(null, '', cleanPath);
+      } else if (parts.length >= 1 && parts[0] === 'prepodavateli') {
+        const cleanPath = `${BASE}/prepodavateli`;
+        window.history.replaceState(null, '', cleanPath);
+      }
+    }
+    return parsePath();
+  });
 
   useEffect(() => {
-    const onHashChange = () => setRoute(parseHash());
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+    const onPopState = () => setRoute(parsePath());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   const navigate = useCallback((r: Route) => {
-    const hash = routeToHash(r);
-    if (window.location.hash !== hash) {
-      window.location.hash = hash;
-    } else {
-      setRoute(r);
+    const path = routeToPath(r);
+    if (window.location.pathname !== path) {
+      window.history.pushState(null, '', path);
     }
+    setRoute(r);
   }, []);
 
   return { route, navigate };
