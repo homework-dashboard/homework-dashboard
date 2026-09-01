@@ -285,10 +285,10 @@ function App() {
         </div>
 
         {/* Secondary action bar for logged-in users */}
-        {session && myProfile && (
-          <div className="border-t border-stone-200 dark:border-slate-700">
-            <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-2 sm:px-6">
-              <button
+         /* {session && myProfile && ( */
+          // <div className="border-t border-stone-200 dark:border-slate-700">
+          //   <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-2 sm:px-6">
+              {/* <button
                 onClick={deleteMySection}
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-900/30 dark:hover:text-red-400"
               >
@@ -305,10 +305,10 @@ function App() {
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:text-slate-400 dark:hover:bg-amber-900/30 dark:hover:text-amber-400 sm:hidden"
               >
                 <ShieldCheck size={13} /> Пароль
-              </button>
-            </div>
-          </div>
-        )}
+              </button> */}
+          //   </div>
+          // </div>
+        // )}
       </header>
 
       <nav className="mx-auto max-w-5xl px-4 pt-4 sm:px-6 sm:pt-6">
