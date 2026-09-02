@@ -91,7 +91,7 @@ export default function LessonsView({
         setCanEdit(!!isAdmin);
       }
     })();
-  }, [teacherSlug]);
+  }, [teacherSlug, myProfile, isAdmin]);
 
   const editable = editMode && canEdit;
 

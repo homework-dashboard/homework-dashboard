@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Music, Home, Pencil, Eye, LogIn, LogOut, ShieldCheck, Moon, Sun, UserCircle, Trash2, UserX } from 'lucide-react';
+import { Music, Home, Pencil, LogIn, LogOut, ShieldCheck, Moon, Sun, UserCircle, Save } from 'lucide-react';
 import type { Teacher, Lesson } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/lib/useTheme';
@@ -10,7 +10,7 @@ import HomeworkView from '@/components/HomeworkView';
 import AuthModal from '@/components/AuthModal';
 import AdminPanel from '@/components/AdminPanel';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
-import ConfirmDialog from '@/components/ConfirmDialog';
+import ProfileModal from '@/components/ProfileModal';
 
 type MyProfile = {
   teacher_id: string;
@@ -30,13 +30,7 @@ function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
   const [forcePasswordChange, setForcePasswordChange] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<null | {
-    title: string;
-    message: string;
-    confirmLabel: string;
-    danger: boolean;
-    onConfirm: () => void;
-  }>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const checkAdmin = useCallback(async () => {
     const { data } = await supabase.rpc('is_current_admin');
@@ -148,59 +142,28 @@ function App() {
     }
   };
 
-  const deleteMySection = async () => {
-    setConfirmDialog({
-      title: 'Удалить раздел преподавателя',
-      message: 'Ваш раздел преподавателя со всеми занятиями и заданиями будет удалён без возможности восстановления. Продолжить?',
-      confirmLabel: 'Удалить раздел',
-      danger: true,
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        const { error } = await supabase.rpc('delete_my_teacher_section');
-        if (error) {
-          alert(error.message);
-          return;
-        }
-        await loadProfile();
-        window.location.reload();
-      },
-    });
-  };
-
   const deleteMyAccount = async () => {
-    setConfirmDialog({
-      title: 'Удалить профиль',
-      message: 'Ваш профиль, раздел преподавателя и все данные будут полностью удалены без возможности восстановления. Продолжить?',
-      confirmLabel: 'Удалить профиль',
-      danger: true,
-      onConfirm: async () => {
-        setConfirmDialog(null);
-        const session = (await supabase.auth.getSession()).data.session;
-        if (!session) return;
-        try {
-          const response = await fetch(
-            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-user-account`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${session.access_token}`,
-                apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-              },
-              body: JSON.stringify({ userId: session.user.id }),
-            }
-          );
-          if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || `Ошибка ${response.status}`);
-          }
-          await supabase.auth.signOut();
-          window.location.reload();
-        } catch (err) {
-          alert(err instanceof Error ? err.message : 'Не удалось удалить профиль');
-        }
-      },
-    });
+    const currentSession = (await supabase.auth.getSession()).data.session;
+    if (!currentSession) throw new Error('Сессия завершена. Войдите снова.');
+
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-user-account`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentSession.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ userId: currentSession.user.id }),
+      }
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `Ошибка ${response.status}`);
+    }
+    await supabase.auth.signOut();
+    window.location.reload();
   };
 
   return (
@@ -247,17 +210,21 @@ function App() {
                   onClick={() => setEditMode((v) => !v)}
                   className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition-colors sm:px-4 ${
                     editMode
-                      ? 'bg-amber-600 text-white hover:bg-amber-700'
+                      ? 'bg-green-600 text-white hover:bg-green-700'
                       : 'bg-stone-100 text-slate-700 ring-1 ring-inset ring-stone-300 hover:bg-stone-200 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600 dark:hover:bg-slate-600'
                   }`}
                 >
-                  {editMode ? <Eye size={16} /> : <Pencil size={16} />}
-                  <span className="hidden sm:inline">{editMode ? 'Просмотр' : 'Редактировать'}</span>
+                  {editMode ? <Save size={16} /> : <Pencil size={16} />}
+                  <span className="hidden sm:inline">{editMode ? 'Сохранить' : 'Редактировать'}</span>
                 </button>
                 {myProfile && (
-                  <span className="hidden items-center gap-1.5 rounded-full bg-stone-100 px-3 py-2 text-sm font-medium text-slate-600 ring-1 ring-inset ring-stone-300 sm:flex dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600">
+                  <button
+                    onClick={() => setProfileOpen(true)}
+                    className="hidden items-center gap-1.5 rounded-full bg-stone-100 px-3 py-2 text-sm font-medium text-slate-600 ring-1 ring-inset ring-stone-300 transition-colors hover:bg-stone-200 sm:flex dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600"
+                    title="Открыть профиль"
+                  >
                     <UserCircle size={16} /> {myProfile.display_name}
-                  </span>
+                  </button>
                 )}
                 <button
                   onClick={() => setChangePasswordOpen(true)}
@@ -284,31 +251,6 @@ function App() {
           </div>
         </div>
 
-        {/* Secondary action bar for logged-in users */}
-        {/* {session && myProfile && (
-          <div className="border-t border-stone-200 dark:border-slate-700">
-            <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-2 sm:px-6">
-              <button
-                onClick={deleteMySection}
-                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-900/30 dark:hover:text-red-400"
-              >
-                <Trash2 size={13} /> <span className="hidden sm:inline">Удалить мой раздел</span><span className="sm:hidden">Раздел</span>
-              </button>
-              <button
-                onClick={deleteMyAccount}
-                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-900/30 dark:hover:text-red-400"
-              >
-                <UserX size={13} /> <span className="hidden sm:inline">Удалить профиль</span><span className="sm:hidden">Профиль</span>
-              </button>
-              <button
-                onClick={() => setChangePasswordOpen(true)}
-                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-amber-50 hover:text-amber-600 dark:text-slate-400 dark:hover:bg-amber-900/30 dark:hover:text-amber-400 sm:hidden"
-              >
-                <ShieldCheck size={13} /> Пароль
-              </button>
-            </div>
-          </div>
-        )} */}
       </header>
 
       <nav className="mx-auto max-w-5xl px-4 pt-4 sm:px-6 sm:pt-6">
@@ -387,6 +329,15 @@ function App() {
         }}
       />
 
+      {profileOpen && myProfile && (
+        <ProfileModal
+          profileName={myProfile.display_name}
+          onClose={() => setProfileOpen(false)}
+          onProfileUpdated={(displayName) => setMyProfile((profile) => profile ? { ...profile, display_name: displayName } : profile)}
+          onDeleteAccount={deleteMyAccount}
+        />
+      )}
+
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
 
       {changePasswordOpen && session && !forcePasswordChange && (
@@ -408,16 +359,6 @@ function App() {
         />
       )}
 
-      {confirmDialog && (
-        <ConfirmDialog
-          title={confirmDialog.title}
-          message={confirmDialog.message}
-          confirmLabel={confirmDialog.confirmLabel}
-          danger={confirmDialog.danger}
-          onConfirm={confirmDialog.onConfirm}
-          onCancel={() => setConfirmDialog(null)}
-        />
-      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { KeyRound, Plus, Copy, Check, Trash2, Loader2, ShieldCheck, User, ShieldAlert, Key, Link2, UserX } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import ConfirmDialog from '@/components/ConfirmDialog';
+import TypeConfirmDialog from '@/components/TypeConfirmDialog';
 
 type RegCode = {
   id: string;
@@ -48,9 +48,9 @@ export default function AdminPanel({ onClose }: Props) {
   const [assigningId, setAssigningId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<null | {
     title: string;
-    message: string;
+    targetName: string;
     confirmLabel: string;
-    onConfirm: () => void;
+    onConfirm: () => Promise<void> | void;
   }>(null);
 
   const load = async () => {
@@ -106,7 +106,7 @@ export default function AdminPanel({ onClose }: Props) {
   const deleteCode = async (c: RegCode) => {
     setConfirmDialog({
       title: 'Удалить код регистрации',
-      message: `Код «${c.code}» будет удалён. Это действие нельзя отменить.`,
+      targetName: c.code,
       confirmLabel: 'Удалить код',
       onConfirm: async () => {
         setConfirmDialog(null);
@@ -123,7 +123,7 @@ export default function AdminPanel({ onClose }: Props) {
   const deleteTeacher = async (id: string, name: string) => {
     setConfirmDialog({
       title: 'Удалить раздел преподавателя',
-      message: `Раздел «${name}» со всеми занятиями и заданиями будет удалён без возможности восстановления.`,
+      targetName: name,
       confirmLabel: 'Удалить раздел',
       onConfirm: async () => {
         setConfirmDialog(null);
@@ -140,7 +140,7 @@ export default function AdminPanel({ onClose }: Props) {
   const deleteAccount = async (accountId: string, name: string) => {
     setConfirmDialog({
       title: 'Удалить аккаунт преподавателя',
-      message: `Аккаунт «${name}» и все его данные будут полностью удалены без возможности восстановления.`,
+      targetName: name,
       confirmLabel: 'Удалить аккаунт',
       onConfirm: async () => {
         setConfirmDialog(null);
@@ -457,10 +457,10 @@ export default function AdminPanel({ onClose }: Props) {
             </p>
           </div>
 
-          {/* Teachers on the board section */}
+          {/* Teachers sections */}
           <div>
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-              <User size={16} /> Преподаватели на табло
+              <User size={16} /> Разделы преподавателей
             </h2>
             {loading ? (
               <div className="flex items-center justify-center py-8 text-slate-400 dark:text-slate-500">
@@ -548,11 +548,10 @@ export default function AdminPanel({ onClose }: Props) {
       </div>
 
       {confirmDialog && (
-        <ConfirmDialog
+        <TypeConfirmDialog
           title={confirmDialog.title}
-          message={confirmDialog.message}
+          targetName={confirmDialog.targetName}
           confirmLabel={confirmDialog.confirmLabel}
-          danger
           onConfirm={confirmDialog.onConfirm}
           onCancel={() => setConfirmDialog(null)}
         />

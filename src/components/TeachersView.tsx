@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Plus, Trash2, User, Camera, Loader2, Lock } from 'lucide-react';
+import { ChevronRight, Plus, Trash2, User, Camera, Loader2, Lock, ImageOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { Teacher } from '@/types';
 import StateBlock from '@/components/StateBlock';
+import TypeConfirmDialog from '@/components/TypeConfirmDialog';
 
 type MyProfile = {
   teacher_id: string;
@@ -30,6 +31,7 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onD
   const [uploadFor, setUploadFor] = useState<string | null>(null);
   const [myTeacherId, setMyTeacherId] = useState<string | null>(null);
   const [myTeacherIdLoaded, setMyTeacherIdLoaded] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Teacher | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -52,9 +54,10 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onD
         setMyTeacherIdLoaded(true);
       });
     } else {
+      setMyTeacherId(null);
       setMyTeacherIdLoaded(true);
     }
-  }, []);
+  }, [myProfile, isAdmin]);
 
   const canEditTeacher = (t: Teacher) => {
     if (!editMode) return false;
@@ -121,7 +124,12 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onD
   };
 
   const remove = async (t: Teacher) => {
-    if (!confirm(`Удалить преподавателя «${t.name}» вместе со всеми заданиями?`)) return;
+    setDeleteTarget(t);
+  };
+
+  const confirmRemove = async () => {
+    if (!deleteTarget) return;
+    const t = deleteTarget;
     setTeachers((prev) => prev.filter((x) => x.id !== t.id));
     const { error } = await supabase.from('teachers').delete().eq('id', t.id);
     if (error) {
@@ -133,6 +141,7 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onD
       setMyTeacherId(null);
       onDeletedSection?.();
     }
+    setDeleteTarget(null);
   };
 
   const triggerUpload = (teacherId: string) => {
@@ -291,7 +300,7 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onD
                         className="shrink-0 rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30"
                         title="Удалить фото"
                       >
-                        <Trash2 size={16} />
+                        <ImageOff size={16} />
                       </button>
                     )}
                     <button
@@ -359,7 +368,7 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onD
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && createOwnSection()}
-              placeholder="Ваше имя для табло"
+              placeholder="Ваше имя для раздела"
               className="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-amber-700 dark:bg-slate-700 dark:text-slate-100"
             />
             <button
@@ -371,6 +380,15 @@ export default function TeachersView({ editMode, onOpen, isAdmin, myProfile, onD
             </button>
           </div>
         </div>
+      )}
+      {deleteTarget && (
+        <TypeConfirmDialog
+          title="Удалить раздел преподавателя"
+          targetName={deleteTarget.name}
+          confirmLabel="Удалить раздел"
+          onConfirm={confirmRemove}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
     </section>
   );

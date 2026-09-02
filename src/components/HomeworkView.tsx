@@ -18,7 +18,7 @@ type Props = {
   editMode: boolean;
   isAdmin?: boolean;
   myProfile?: MyProfile | null;
-};
+ };
 
 function formatDate(iso: string) {
   const [y, m, d] = iso.split('-');
@@ -111,7 +111,7 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
         setCanEdit(!!isAdmin);
       }
     })();
-  }, [lessonSlug, teacherSlug]);
+  }, [lessonSlug, teacherSlug, myProfile, isAdmin]);
 
   const editable = editMode && canEdit;
 
