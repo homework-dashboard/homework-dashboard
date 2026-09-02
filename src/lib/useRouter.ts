@@ -9,7 +9,14 @@ export type Route =
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+// Detect base path at runtime: /homework-dashboard/ on GitHub Pages, / on bolt.host
+const BASE = (() => {
+  const path = window.location.pathname;
+  if (path.indexOf('/homework-dashboard/') === 0 || path === '/homework-dashboard') {
+    return '/homework-dashboard';
+  }
+  return '';
+})();
 
 function parsePath(): Route {
   const path = window.location.pathname.slice(BASE.length) || '/';

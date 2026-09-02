@@ -20,7 +20,7 @@ function githubPages404(): Plugin {
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/homework-dashboard/' : '/',
+  base: './',
   plugins: [react(), githubPages404()],
   resolve: {
     alias: {

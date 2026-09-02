@@ -11,6 +11,22 @@
     <meta property="og:image" content="https://bolt.new/static/og_default.png">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="https://bolt.new/static/og_default.png">
+    <script>
+      // Set <base> at runtime so one build works on both bolt.host (served at /)
+      // and GitHub Pages (served at /homework-dashboard/).
+      (function() {
+        var path = window.location.pathname;
+        var base;
+        if (path.indexOf('/homework-dashboard/') === 0 || path === '/homework-dashboard') {
+          base = '/homework-dashboard/';
+        } else {
+          base = '/';
+        }
+        var el = document.createElement('base');
+        el.href = base;
+        document.head.appendChild(el);
+      })();
+    </script>
 </head>
   <body>
     <script>
