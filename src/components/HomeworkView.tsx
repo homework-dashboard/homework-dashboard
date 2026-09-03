@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, CalendarDays, Lock, X } from 'lucide-react';
+import { Plus, Trash2, CalendarDays, Lock, X, Link2, ExternalLink, Copy, Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import type { Lesson, Homework, HomeworkSubject, HomeworkEntry } from '@/types';
+import type { Lesson, Homework, HomeworkSubject } from '@/types';
 import { weekdayName, formatTime } from '@/types';
 import StateBlock from '@/components/StateBlock';
 
@@ -35,12 +35,13 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
   const [teacherId, setTeacherId] = useState<string | null>(null);
   const [rows, setRows] = useState<Homework[]>([]);
   const [subjects, setSubjects] = useState<HomeworkSubject[]>([]);
-  const [entries, setEntries] = useState<Record<string, Record<string, string>>>({});
+  const [entries, setEntries] = useState<Record<string, Record<string, { content: string; link_url: string }>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
   const [newSubjectName, setNewSubjectName] = useState('');
+  const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -84,7 +85,7 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
           .order('created_at', { ascending: true }),
         supabase
           .from('homework_entries')
-          .select('homework_id, subject_id, content'),
+          .select('homework_id, subject_id, content, link_url'),
       ]);
 
       if (hwRes.error) setError(hwRes.error.message);
@@ -93,10 +94,10 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
       else {
         setRows(hwRes.data ?? []);
         setSubjects(subjRes.data ?? []);
-        const entMap: Record<string, Record<string, string>> = {};
+        const entMap: Record<string, Record<string, { content: string; link_url: string }>> = {};
         for (const e of entRes.data ?? []) {
           if (!entMap[e.homework_id]) entMap[e.homework_id] = {};
-          entMap[e.homework_id][e.subject_id] = e.content;
+          entMap[e.homework_id][e.subject_id] = { content: e.content, link_url: e.link_url ?? '' };
         }
         setEntries(entMap);
       }
@@ -162,11 +163,14 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
     await supabase.from('homework').update({ due_date }).eq('id', r.id);
   };
 
-  const patchEntry = async (hwId: string, subjId: string, content: string) => {
-    setEntries((prev) => ({
-      ...prev,
-      [hwId]: { ...(prev[hwId] ?? {}), [subjId]: content },
-    }));
+  const upsertEntry = async (hwId: string, subjId: string, patch: { content?: string; link_url?: string }) => {
+    setEntries((prev) => {
+      const cur = prev[hwId]?.[subjId] ?? { content: '', link_url: '' };
+      return {
+        ...prev,
+        [hwId]: { ...(prev[hwId] ?? {}), [subjId]: { ...cur, ...patch } },
+      };
+    });
     const { data: existing } = await supabase
       .from('homework_entries')
       .select('id')
@@ -174,9 +178,55 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
       .eq('subject_id', subjId)
       .maybeSingle();
     if (existing) {
-      await supabase.from('homework_entries').update({ content }).eq('id', existing.id);
+      await supabase.from('homework_entries').update(patch).eq('id', existing.id);
     } else {
-      await supabase.from('homework_entries').insert({ homework_id: hwId, subject_id: subjId, content });
+      await supabase.from('homework_entries').insert({ homework_id: hwId, subject_id: subjId, content: patch.content ?? '', link_url: patch.link_url ?? null });
+    }
+  };
+
+  const copyRow = async (row: Homework) => {
+    const sections = subjects.reduce<string[]>((result, subject) => {
+      const entry = entries[row.id]?.[subject.id] ?? { content: '', link_url: '' };
+      if (!entry.content.trim() && !entry.link_url.trim()) return result;
+      const lines = [`${subject.name || 'Без названия'}: ${entry.content.trim()}`];
+      if (entry.link_url.trim()) lines.push(entry.link_url.trim());
+      result.push(lines.join('\n'));
+      return result;
+    }, []);
+
+    const parts: string[] = [formatDate(row.due_date), ''];
+    for (let i = 0; i < sections.length; i++) {
+      if (i > 0) parts.push('');
+      parts.push(sections[i]);
+    }
+    const text = parts.join('\n');
+
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand('copy');
+        copied = true;
+      } catch {
+        // ignore
+      }
+      document.body.removeChild(ta);
+    }
+
+    if (copied) {
+      setCopiedRowId(row.id);
+      window.setTimeout(() => setCopiedRowId((cur) => (cur === row.id ? null : cur)), 1800);
+    } else {
+      setError('Не удалось скопировать задание');
     }
   };
 
@@ -231,7 +281,7 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
     : '…';
 
   const colCount = subjects.length;
-  const dateColW = 'minmax(90px, 110px)';
+  const dateColW = 'minmax(150px, 170px)';
   const subjColW = 'minmax(140px, 1fr)';
   const actionColW = '40px';
 
@@ -281,7 +331,7 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
             style={gridStyle}
           >
             <div className="flex items-center gap-1.5 px-3 py-3 text-xs font-semibold uppercase tracking-wider text-amber-800 sm:px-4 dark:text-amber-400">
-              <CalendarDays size={14} /> <span className="hidden sm:inline">Дата</span>
+              <CalendarDays size={14} className="shrink-0" /> <span className="hidden sm:inline">Дата</span>
             </div>
             {subjects.map((s) => (
               <div key={s.id} className="border-l border-amber-200 px-2 py-2 sm:px-3 dark:border-amber-800">
@@ -331,32 +381,72 @@ export default function HomeworkView({ lessonSlug, teacherSlug, editMode, isAdmi
                       className="w-full rounded-lg border border-stone-300 px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
                     />
                   ) : (
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                      {formatDate(r.due_date)}
-                    </span>
+                    <div className="flex h-full flex-col items-start gap-3">
+                      <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        {formatDate(r.due_date)}
+                      </span>
+                      <button
+                        onClick={() => copyRow(r)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-900/30"
+                        title="Скопировать всё задание на эту дату"
+                      >
+                        {copiedRowId === r.id ? <Check size={13} /> : <Copy size={13} />}
+                        {copiedRowId === r.id ? 'Скопировано' : 'Копировать'}
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                {subjects.map((s) => (
+                {subjects.map((s) => {
+                  const ent = entries[r.id]?.[s.id] ?? { content: '', link_url: '' };
+                  return (
                   <div key={s.id} className="border-l border-stone-100 px-3 py-3 sm:px-4 dark:border-slate-700">
                     {editable ? (
-                      <textarea
-                        defaultValue={entries[r.id]?.[s.id] ?? ''}
-                        rows={2}
-                        placeholder="Задание"
-                        onBlur={(e) => {
-                          const v = e.target.value;
-                          if (v !== (entries[r.id]?.[s.id] ?? '')) patchEntry(r.id, s.id, v);
-                        }}
-                        className="w-full resize-y rounded-lg border border-stone-300 px-2 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
-                      />
+                      <div className="flex flex-col gap-2">
+                        <textarea
+                          defaultValue={ent.content}
+                          rows={2}
+                          placeholder="Задание"
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v !== ent.content) upsertEntry(r.id, s.id, { content: v });
+                          }}
+                          className="w-full resize-y rounded-lg border border-stone-300 px-2 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                        />
+                        <div className="flex items-center gap-1.5">
+                          <Link2 size={14} className="shrink-0 text-slate-400 dark:text-slate-500" />
+                          <input
+                            type="url"
+                            defaultValue={ent.link_url}
+                            placeholder="Ссылка на файл или папку"
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (v !== ent.link_url) upsertEntry(r.id, s.id, { link_url: v });
+                            }}
+                            className="min-w-0 flex-1 rounded-lg border border-stone-300 px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
+                          />
+                        </div>
+                      </div>
                     ) : (
-                      <p className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-300">
-                        {entries[r.id]?.[s.id] || <span className="text-stone-300 dark:text-slate-600">—</span>}
-                      </p>
+                      <div className="flex h-full flex-col gap-2">
+                        <p className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-300">
+                          {ent.content || <span className="text-stone-300 dark:text-slate-600">—</span>}
+                        </p>
+                        {ent.link_url && (
+                          <a
+                            href={ent.link_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-auto inline-flex w-fit max-w-full items-center gap-1.5 break-all rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700 sm:px-3"
+                          >
+                            <ExternalLink size={13} className="shrink-0" /> <span>Открыть материал</span>
+                          </a>
+                        )}
+                      </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
 
                 {editable && (
                   <div className="flex items-center justify-center border-l border-stone-100 px-1 dark:border-slate-700">
